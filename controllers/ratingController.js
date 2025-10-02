@@ -3,6 +3,7 @@ import userModel from '../models/usermodel.js';
 import postModel from '../models/postmodel.js';
 import inAppNotificationService from '../services/inAppNotificationService.js';
 import fcmService from '../config/firebase.js';
+import mongoose from 'mongoose';
 
 export const submitRating = async (req, res) => {
   try {
