@@ -75,56 +75,42 @@ export const submitRating = async (req, res) => {
 export const getUserRatings = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
 
-    const skip = (page - 1) * limit;
+    // Convert userId to ObjectId safely
+    const userObjectId = mongoose.Types.ObjectId(userId);
 
-    const ratings = await Rating.find({ ratedUser: userId })
-      .populate('rater', 'name profilePhoto')
-      .populate('post', 'title')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const total = await Rating.countDocuments({ ratedUser: userId });
-
-    // Get average rating
+    // Aggregate average rating
     const averageResult = await Rating.aggregate([
-      { $match: { ratedUser: mongoose.Types.ObjectId(userId) } },
-      { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }
+      { $match: { ratedUser: userObjectId } },
+      {
+        $group: {
+          _id: null,
+          average: { $avg: '$rating' },
+          count: { $sum: 1 }
+        }
+      }
     ]);
 
-    const averageRating = averageResult[0]?.average || 0;
-    const totalRatings = averageResult[0]?.count || 0;
-
-    // Get rating distribution
+    // Aggregate rating distribution
     const distribution = await Rating.aggregate([
-      { $match: { ratedUser: mongoose.Types.ObjectId(userId) } },
+      { $match: { ratedUser: userObjectId } },
       { $group: { _id: '$rating', count: { $sum: 1 } } },
       { $sort: { _id: -1 } }
     ]);
 
-    res.json({
-      success: true,
-      ratings,
-      summary: {
-        averageRating: Math.round(averageRating * 10) / 10,
-        totalRatings,
-        distribution
-      },
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit)
-      }
+    const averageRating = averageResult[0]?.average || 0;
+    const ratingCount = averageResult[0]?.count || 0;
+
+    res.status(200).json({
+      averageRating,
+      ratingCount,
+      distribution
     });
   } catch (error) {
     console.error('Get user ratings error:', error);
-    return res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ message: 'Failed to fetch user ratings', error: error.message });
   }
 };
-
 export const canUserRate = async (req, res) => {
   try {
     const { ratedUserId, postId } = req.query;
@@ -160,7 +146,7 @@ export const canUserRate = async (req, res) => {
 // Helper functions
 async function updateUserAverageRating(userId) {
   const result = await Rating.aggregate([
-    { $match: { ratedUser: mongoose.Types.ObjectId(userId) } },
+    { $match: { ratedUser: new mongoose.Types.ObjectId(userId) } },
     { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }
   ]);
 
@@ -199,3 +185,35 @@ async function sendRatingNotifications(ratedUser, rater, rating, comment, postId
     console.error('Rating notification error:', error);
   }
 }
+export const getRatingsByUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const ratings = await Rating.find({ rater: mongoose.Types.ObjectId(userId) }).populate('ratedUser', 'name');
+
+    res.status(200).json(ratings);
+  } catch (error) {
+    console.error('Get ratings by user error:', error);
+    res.status(500).json({ message: 'Failed to fetch ratings', error: error.message });
+  }
+};
+
+export const addUserRating = async (req, res) => {
+  try {
+    const { ratedUser, rater, rating, comment } = req.body;
+
+    const newRating = new Rating({
+      ratedUser: mongoose.Types.ObjectId(ratedUser),
+      rater: mongoose.Types.ObjectId(rater),
+      rating,
+      comment
+    });
+
+    await newRating.save();
+
+    res.status(201).json({ message: 'Rating added successfully', rating: newRating });
+  } catch (error) {
+    console.error('Add rating error:', error);
+    res.status(500).json({ message: 'Failed to add rating', error: error.message });
+  }
+};

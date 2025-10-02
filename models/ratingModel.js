@@ -1,38 +1,35 @@
+// models/Rating.js
 import mongoose from 'mongoose';
 
-const ratingSchema = new mongoose.Schema({
-  rater: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'user',
-    required: true
-  },
-  ratedUser: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'user',
-    required: true
-  },
-  post: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'post'
-  },
-  rating: {
-    type: Number,
-    required: true,
-    min: 1,
-    max: 5
-  },
-  comment: {
-    type: String,
-    maxlength: 500
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
-});
+const { Schema, model, Types } = mongoose;
 
-// Ensure one rating per user per post combination
-ratingSchema.index({ rater: 1, ratedUser: 1, post: 1 }, { unique: true });
+const ratingSchema = new Schema(
+  {
+    ratedUser: {
+      type: Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    rater: {
+      type: Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    rating: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: 5,
+    },
+    comment: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+  },
+  { timestamps: true }
+);
 
-const Rating = mongoose.models.Rating || mongoose.model('Rating', ratingSchema);
+const Rating = model('Rating', ratingSchema);
+
 export default Rating;
