@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken";
 
 import twilioService from '../config/twilio.js';
 // Import the user model from the models directory
-import userModel from "../models/usermodel.js";
+import userModel from '../models/usermodel.js'
 
 import transporter from "../config/modemailer.js";
 

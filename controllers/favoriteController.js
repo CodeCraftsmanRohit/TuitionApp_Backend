@@ -1,7 +1,7 @@
 // controllers/favoriteController.js
 import Favorite from '../models/favoriteModel.js';
 import postModel from '../models/postmodel.js';
-import userModel from '../models/userModel.js'; // <-- ADDED import
+import userModel from '../models/usermodel.js'; // <-- ADDED import
 import inAppNotificationService from '../services/inAppNotificationService.js';
 
 export const toggleFavorite = async (req, res) => {
