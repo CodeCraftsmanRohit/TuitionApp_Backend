@@ -1,11 +1,17 @@
+// controllers/favoriteController.js
 import Favorite from '../models/favoriteModel.js';
 import postModel from '../models/postmodel.js';
+import userModel from '../models/userModel.js'; // <-- ADDED import
 import inAppNotificationService from '../services/inAppNotificationService.js';
 
 export const toggleFavorite = async (req, res) => {
   try {
     const { postId } = req.params;
     const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
 
     // Check if post exists
     const post = await postModel.findById(postId);
@@ -34,15 +40,24 @@ export const toggleFavorite = async (req, res) => {
       await favorite.save();
 
       // Send notification to post owner (if not the same user)
-      if (post.createdBy.toString() !== userId) {
-        const user = await userModel.findById(userId).select('name');
-        await inAppNotificationService.createNotification(
-          post.createdBy,
-          'New Favorite ⭐',
-          `${user.name} added your post to favorites`,
-          'favorite',
-          post._id
-        );
+      try {
+        if (post.createdBy && post.createdBy.toString() !== userId) {
+          const user = await userModel.findById(userId).select('name');
+          const userName = user?.name || 'Someone';
+
+          // guard the notification service to avoid unhandled errors
+          if (inAppNotificationService && typeof inAppNotificationService.createNotification === 'function') {
+            await inAppNotificationService.createNotification(
+              post.createdBy,
+              'New Favorite ⭐',
+              `${userName} added your post to favorites`,
+              'favorite',
+              post._id
+            );
+          }
+        }
+      } catch (notifErr) {
+        console.warn('Notification send failed (non-blocking):', notifErr);
       }
 
       return res.json({
@@ -60,8 +75,9 @@ export const toggleFavorite = async (req, res) => {
 export const getUserFavorites = async (req, res) => {
   try {
     const userId = req.userId;
-    const { page = 1, limit = 20 } = req.query;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
+    const { page = 1, limit = 20 } = req.query;
     const skip = (page - 1) * limit;
 
     const favorites = await Favorite.find({ user: userId })
@@ -69,7 +85,7 @@ export const getUserFavorites = async (req, res) => {
         path: 'post',
         populate: {
           path: 'createdBy',
-          select: 'name profilePhoto'
+          select: 'name profilePhoto averageRating ratingCount'
         }
       })
       .sort({ createdAt: -1 })
@@ -101,6 +117,7 @@ export const checkFavoriteStatus = async (req, res) => {
   try {
     const { postId } = req.params;
     const userId = req.userId;
+    if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const isFavorited = await Favorite.exists({ user: userId, post: postId });
 
