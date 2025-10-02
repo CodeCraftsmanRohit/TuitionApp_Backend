@@ -89,6 +89,29 @@ class FCMService {
     }
   }
 
+  // Add to your existing FCMService class
+async sendFavoriteNotification(fcmToken, postTitle, userName) {
+  return this.sendPushNotification(
+    fcmToken,
+    'New Favorite ⭐',
+    `${userName} added your post "${postTitle}" to favorites`,
+    { type: 'favorite' }
+  );
+}
+
+async sendRatingNotification(fcmToken, userName, rating, comment) {
+  const message = comment
+    ? `${userName} rated you ${rating} stars and commented`
+    : `${userName} rated you ${rating} stars`;
+
+  return this.sendPushNotification(
+    fcmToken,
+    'New Rating ⭐',
+    message,
+    { type: 'rating' }
+  );
+}
+
   async sendBulkPushNotifications(tokens, title, body, data = {}) {
     if (!this.initialized) {
       console.log('⚠️ Firebase not initialized - Bulk push notifications skipped');

@@ -21,6 +21,9 @@ import testRouter from './routes/testroutes.js';
 import notificationRouter from './routes/notificationRoutes.js';
 import interactionRouter from './routes/interactionRoutes.js';
 import adminRouter from './routes/adminRoutes.js';
+import favoriteRouter from './routes/favoriteRoutes.js';
+import searchRouter from './routes/searchRoutes.js';
+import ratingRouter from './routes/ratingRoutes.js';
 
 // Add after other routes
 const app = express();
@@ -45,6 +48,9 @@ app.use('/api/posts', postRouter);
 app.use('/api/notifications', notificationRouter);
 app.use('/api', interactionRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/favorites', favoriteRouter);
+app.use('/api/search', searchRouter);
+app.use('/api/ratings', ratingRouter);
 
 // app.use('/api/test', testRouter);
 // In server.js, add this check:
