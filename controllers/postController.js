@@ -325,6 +325,7 @@ export const getAllPosts = async (req, res) => {
 
 // Update the updatePost function
 // controllers/postController.js - Update updatePost function
+// controllers/postController.js - Update updatePost function
 export const updatePost = async (req, res) => {
   const postId = req.params.id;
   const userId = req.userId;
@@ -339,7 +340,17 @@ export const updatePost = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to edit this post' });
     }
 
-    let updateData = { ...req.body };
+    let updateData = {};
+
+    // Handle text fields - they come in req.body
+    if (req.body) {
+      updateData = { ...req.body };
+
+      // Convert salary to number if it exists
+      if (updateData.salary) {
+        updateData.salary = Number(updateData.salary);
+      }
+    }
 
     // Handle image upload if file exists
     if (req.file && req.file.buffer) {
@@ -362,8 +373,9 @@ export const updatePost = async (req, res) => {
       }
     }
 
-    // Handle image removal
-    if (req.body.removeImage === 'true') {
+    // Handle image removal - check both req.body and the form data way
+    const removeImage = req.body?.removeImage === 'true';
+    if (removeImage) {
       if (post.image && post.image.public_id) {
         try {
           await cloudinary.uploader.destroy(post.image.public_id);
@@ -387,7 +399,6 @@ export const updatePost = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
 // Update the deletePost function
 export const deletePost = async (req, res) => {
   const postId = req.params.id;
