@@ -133,12 +133,13 @@ export const submitRating = async (req, res) => {
     }
 
     // Validate ids
-    if (!mongoose.Types.ObjectId.isValid(ratedUserIdFinal) || !mongoose.Types.ObjectId.isValid(raterId)) {
+    if (!mongoose.isValidObjectId(ratedUserIdFinal) || !mongoose.isValidObjectId(raterId)) {
       return res.status(400).json({ success: false, message: 'Invalid user id(s) provided' });
     }
 
-    const ratedUserObjId = mongoose.Types.ObjectId(ratedUserIdFinal);
-    const raterObjId = mongoose.Types.ObjectId(raterId);
+    // Construct ObjectId instances using `new`
+    const ratedUserObjId = new mongoose.Types.ObjectId(ratedUserIdFinal);
+    const raterObjId = new mongoose.Types.ObjectId(raterId);
 
     // Prevent self-rating
     if (raterObjId.toString() === ratedUserObjId.toString()) {
@@ -148,10 +149,10 @@ export const submitRating = async (req, res) => {
     // Optional: validate postId if provided
     let postObjId;
     if (postId) {
-      if (!mongoose.Types.ObjectId.isValid(postId)) {
+      if (!mongoose.isValidObjectId(postId)) {
         return res.status(400).json({ success: false, message: 'Invalid postId' });
       }
-      postObjId = mongoose.Types.ObjectId(postId);
+      postObjId = new mongoose.Types.ObjectId(postId);
       const exists = await postModel.findById(postObjId);
       if (!exists) return res.status(404).json({ success: false, message: 'Post not found' });
     }
@@ -320,11 +321,19 @@ export const addUserRating = async (req, res) => {
   try {
     const { ratedUser, rater, rating, comment } = req.body;
 
+    if (!ratedUser || !rater || rating === undefined || rating === null) {
+      return res.status(400).json({ message: 'ratedUser, rater and rating are required' });
+    }
+
+    if (!mongoose.isValidObjectId(ratedUser) || !mongoose.isValidObjectId(rater)) {
+      return res.status(400).json({ message: 'Invalid user id(s) provided' });
+    }
+
     const newRating = new Rating({
-      ratedUser: mongoose.Types.ObjectId(ratedUser),
-      rater: mongoose.Types.ObjectId(rater),
+      ratedUser: new mongoose.Types.ObjectId(ratedUser),
+      rater: new mongoose.Types.ObjectId(rater),
       rating,
-      comment
+      comment: comment ? comment.trim() : ''
     });
 
     await newRating.save();
