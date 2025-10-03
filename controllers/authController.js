@@ -63,16 +63,16 @@ export const register = async (req, res) => {
     // Fire-and-forget notifications (async background)
     (async () => {
       // WhatsApp via Twilio if phone exists
-      if (phone) {
-        try {
-          const to = `whatsapp:${phone.replace(/\D/g, "")}`;
-          const welcomeMessage = `Welcome to Tuition App, ${name}! 🎓\n\nYour account has been created successfully.\nEmail: ${email}\n\nThank you for joining!`;
-          await twilioService.sendWhatsAppMessage(to, welcomeMessage);
-          console.log(`✅ WhatsApp welcome sent to ${phone}`);
-        } catch (whatsappError) {
-          console.warn("⚠️ WhatsApp send failed (non-blocking):", whatsappError?.message || whatsappError);
-        }
-      }
+      // if (phone) {
+      //   try {
+      //     const to = `whatsapp:${phone.replace(/\D/g, "")}`;
+      //     const welcomeMessage = `Welcome to Tuition App, ${name}! 🎓\n\nYour account has been created successfully.\nEmail: ${email}\n\nThank you for joining!`;
+      //     await twilioService.sendWhatsAppMessage(to, welcomeMessage);
+      //     console.log(`✅ WhatsApp welcome sent to ${phone}`);
+      //   } catch (whatsappError) {
+      //     console.warn("⚠️ WhatsApp send failed (non-blocking):", whatsappError?.message || whatsappError);
+      //   }
+      // }
 
       // Welcome email (if mailer ready)
       try {
