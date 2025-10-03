@@ -1,3 +1,4 @@
+// controllers/ratingController.js
 import Rating from '../models/ratingModel.js';
 import userModel from '../models/usermodel.js';
 import postModel from '../models/postmodel.js';
@@ -5,7 +6,10 @@ import inAppNotificationService from '../services/inAppNotificationService.js';
 import fcmService from '../config/firebase.js';
 import mongoose from 'mongoose';
 
-// Add this function for rating notifications
+/**
+ * Send rating notifications (in-app + push + admin alert)
+ * ratedUser and rater must be full user documents (not just ids)
+ */
 async function sendRatingNotifications(ratedUser, rater, rating, comment, postId) {
   try {
     const message = comment
@@ -14,7 +18,7 @@ async function sendRatingNotifications(ratedUser, rater, rating, comment, postId
 
     console.log(`🔔 Sending rating notification to: ${ratedUser.name}`);
 
-    // In-app notification to the rated user
+    // In-app notification
     await inAppNotificationService.createNotification(
       ratedUser._id,
       'New Rating ⭐',
@@ -38,7 +42,7 @@ async function sendRatingNotifications(ratedUser, rater, rating, comment, postId
       }
     }
 
-    // Notify admins about new ratings
+    // Notify admins
     const adminUsers = await userModel.find({
       role: 'admin',
       pushNotifications: true,
@@ -74,42 +78,136 @@ async function sendRatingNotifications(ratedUser, rater, rating, comment, postId
   }
 }
 
-// Update the submitRating function to call the notification function
-export const submitRating = async (req, res) => {
+/**
+ * Helper: recalc average + count for a user
+ */
+async function updateUserAverageRating(userId) {
   try {
-    const { ratedUserId, postId, rating, comment } = req.body;
-    const raterId = req.userId;
+    const result = await Rating.aggregate([
+      { $match: { ratedUser: new mongoose.Types.ObjectId(userId) } },
+      { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }
+    ]);
 
-    // ... existing validation code ...
+    const averageRating = result[0]?.average || 0;
+    const count = result[0]?.count || 0;
 
-    // Create new rating
-    const newRating = new Rating({
-      rater: raterId,
-      ratedUser: ratedUserId,
-      post: postId,
-      rating,
-      comment
-    });
-
-    await newRating.save();
-
-    // Update user's average rating
-    await updateUserAverageRating(ratedUserId);
-
-    // Send notifications - use the new function
-    await sendRatingNotifications(ratedUser, rater, rating, comment, postId);
-
-    res.json({
-      success: true,
-      message: 'Rating submitted successfully',
-      rating: newRating
+    await userModel.findByIdAndUpdate(userId, {
+      averageRating: Math.round(averageRating * 10) / 10,
+      ratingCount: count
     });
   } catch (error) {
-    console.error('Submit rating error:', error);
-    return res.status(500).json({ success: false, message: error.message });
+    // don't throw — caller can decide how to handle
+    console.warn('updateUserAverageRating failed:', error);
+  }
+}
+
+/**
+ * submitRating - robust server-side handler
+ * Accepts either `ratedUser` OR `ratedUserId` in body.
+ * Requires authenticated user (req.userId via userAuth middleware)
+ */
+export const submitRating = async (req, res) => {
+  try {
+    console.log('submitRating body:', req.body);
+
+    const {
+      ratedUser: ratedUserFromBody,
+      ratedUserId,
+      postId,
+      rating,
+      comment
+    } = req.body;
+
+    const ratedUserIdFinal = ratedUserFromBody || ratedUserId;
+    const raterId = req.userId || req.body.rater || null;
+
+    // Basic validation
+    if (!ratedUserIdFinal) {
+      return res.status(400).json({ success: false, message: 'ratedUser (or ratedUserId) is required' });
+    }
+    if (rating === undefined || rating === null) {
+      return res.status(400).json({ success: false, message: 'rating is required' });
+    }
+    if (!raterId) {
+      return res.status(401).json({ success: false, message: 'Unauthenticated: rater id missing' });
+    }
+
+    // Validate ids
+    if (!mongoose.Types.ObjectId.isValid(ratedUserIdFinal) || !mongoose.Types.ObjectId.isValid(raterId)) {
+      return res.status(400).json({ success: false, message: 'Invalid user id(s) provided' });
+    }
+
+    const ratedUserObjId = mongoose.Types.ObjectId(ratedUserIdFinal);
+    const raterObjId = mongoose.Types.ObjectId(raterId);
+
+    // Prevent self-rating
+    if (raterObjId.toString() === ratedUserObjId.toString()) {
+      return res.status(400).json({ success: false, message: 'Cannot rate yourself' });
+    }
+
+    // Optional: validate postId if provided
+    let postObjId;
+    if (postId) {
+      if (!mongoose.Types.ObjectId.isValid(postId)) {
+        return res.status(400).json({ success: false, message: 'Invalid postId' });
+      }
+      postObjId = mongoose.Types.ObjectId(postId);
+      const exists = await postModel.findById(postObjId);
+      if (!exists) return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    // Load rated user and rater docs
+    const [ratedUserDoc, raterDoc] = await Promise.all([
+      userModel.findById(ratedUserObjId).select('+fcmToken +pushNotifications'),
+      userModel.findById(raterObjId).select('name')
+    ]);
+
+    if (!ratedUserDoc) {
+      return res.status(404).json({ success: false, message: 'Rated user not found' });
+    }
+    if (!raterDoc) {
+      return res.status(404).json({ success: false, message: 'Rater (current user) not found' });
+    }
+
+    // Create rating
+    const newRating = new Rating({
+      rater: raterObjId,
+      ratedUser: ratedUserObjId,
+      post: postObjId ? postObjId : undefined,
+      rating,
+      comment: comment ? comment.trim() : ''
+    });
+
+    const savedRating = await newRating.save();
+
+    // Recalculate average & counts (non-fatal)
+    try {
+      await updateUserAverageRating(ratedUserObjId);
+    } catch (err) {
+      console.warn('Failed updating average rating (non-fatal):', err);
+    }
+
+    // Send notifications (non-fatal)
+    try {
+      await sendRatingNotifications(ratedUserDoc, raterDoc, rating, comment, postId);
+    } catch (notifErr) {
+      console.warn('sendRatingNotifications failed (non-fatal):', notifErr);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Rating submitted successfully',
+      rating: savedRating
+    });
+  } catch (error) {
+    console.error('Submit rating error (controller):', error);
+    return res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 };
-// Helper functions
+
+/**
+ * Get ratings for a user (received ratings)
+ */
 export const getUserRatings = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -126,7 +224,6 @@ export const getUserRatings = async (req, res) => {
 
     const total = await Rating.countDocuments({ ratedUser: userId });
 
-    // Get average rating - FIXED: Use new mongoose.Types.ObjectId
     const averageResult = await Rating.aggregate([
       { $match: { ratedUser: new mongoose.Types.ObjectId(userId) } },
       { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }
@@ -135,7 +232,6 @@ export const getUserRatings = async (req, res) => {
     const averageRating = averageResult[0]?.average || 0;
     const totalRatings = averageResult[0]?.count || 0;
 
-    // Get rating distribution - FIXED: Use new mongoose.Types.ObjectId
     const distribution = await Rating.aggregate([
       { $match: { ratedUser: new mongoose.Types.ObjectId(userId) } },
       { $group: { _id: '$rating', count: { $sum: 1 } } },
@@ -163,25 +259,17 @@ export const getUserRatings = async (req, res) => {
   }
 };
 
-// Helper functions
-async function updateUserAverageRating(userId) {
-  // FIXED: Use new mongoose.Types.ObjectId
-  const result = await Rating.aggregate([
-    { $match: { ratedUser: new mongoose.Types.ObjectId(userId) } },
-    { $group: { _id: null, average: { $avg: '$rating' }, count: { $sum: 1 } } }
-  ]);
-
-  const averageRating = result[0]?.average || 0;
-
-  await userModel.findByIdAndUpdate(userId, {
-    averageRating: Math.round(averageRating * 10) / 10,
-    ratingCount: result[0]?.count || 0
-  });
-}
+/**
+ * Check if current user can rate a given user/post
+ */
 export const canUserRate = async (req, res) => {
   try {
     const { ratedUserId, postId } = req.query;
     const raterId = req.userId;
+
+    if (!ratedUserId) {
+      return res.status(400).json({ success: false, message: 'ratedUserId required' });
+    }
 
     // Users can't rate themselves
     if (raterId === ratedUserId) {
@@ -192,7 +280,6 @@ export const canUserRate = async (req, res) => {
       });
     }
 
-    // Check if already rated
     const existingRating = await Rating.findOne({
       rater: raterId,
       ratedUser: ratedUserId,
@@ -210,8 +297,9 @@ export const canUserRate = async (req, res) => {
   }
 };
 
-
-
+/**
+ * Get ratings given BY a user
+ */
 export const getRatingsByUser = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -225,6 +313,9 @@ export const getRatingsByUser = async (req, res) => {
   }
 };
 
+/**
+ * addUserRating - alternate endpoint (keeps original behavior)
+ */
 export const addUserRating = async (req, res) => {
   try {
     const { ratedUser, rater, rating, comment } = req.body;
