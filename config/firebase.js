@@ -99,6 +99,7 @@ async sendFavoriteNotification(fcmToken, postTitle, userName) {
   );
 }
 
+// The sendRatingNotification method should already exist, but let's verify it's working
 async sendRatingNotification(fcmToken, userName, rating, comment) {
   const message = comment
     ? `${userName} rated you ${rating} stars and commented`
@@ -111,7 +112,6 @@ async sendRatingNotification(fcmToken, userName, rating, comment) {
     { type: 'rating' }
   );
 }
-
   async sendBulkPushNotifications(tokens, title, body, data = {}) {
     if (!this.initialized) {
       console.log('⚠️ Firebase not initialized - Bulk push notifications skipped');

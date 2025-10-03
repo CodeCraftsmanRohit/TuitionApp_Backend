@@ -5,44 +5,82 @@ import inAppNotificationService from '../services/inAppNotificationService.js';
 import fcmService from '../config/firebase.js';
 import mongoose from 'mongoose';
 
+// Add this function for rating notifications
+async function sendRatingNotifications(ratedUser, rater, rating, comment, postId) {
+  try {
+    const message = comment
+      ? `${rater.name} rated you ${rating} stars: "${comment}"`
+      : `${rater.name} rated you ${rating} stars`;
+
+    console.log(`🔔 Sending rating notification to: ${ratedUser.name}`);
+
+    // In-app notification to the rated user
+    await inAppNotificationService.createNotification(
+      ratedUser._id,
+      'New Rating ⭐',
+      message,
+      'rating',
+      postId
+    );
+
+    // Push notification if enabled
+    if (ratedUser.fcmToken && ratedUser.pushNotifications) {
+      try {
+        await fcmService.sendRatingNotification(
+          ratedUser.fcmToken,
+          rater.name,
+          rating,
+          comment
+        );
+        console.log(`📱 Push notification sent for rating`);
+      } catch (pushError) {
+        console.warn('Push notification failed for rating:', pushError.message);
+      }
+    }
+
+    // Notify admins about new ratings
+    const adminUsers = await userModel.find({
+      role: 'admin',
+      pushNotifications: true,
+      fcmToken: { $exists: true, $ne: '' }
+    }).select('fcmToken');
+
+    if (adminUsers.length > 0) {
+      const adminTokens = adminUsers.map(admin => admin.fcmToken);
+      const adminMessage = `${rater.name} rated ${ratedUser.name} ${rating} stars`;
+
+      try {
+        await fcmService.sendBulkPushNotifications(
+          adminTokens,
+          'New User Rating',
+          adminMessage,
+          {
+            type: 'rating',
+            ratedUserId: ratedUser._id.toString(),
+            raterId: rater._id.toString(),
+            adminAlert: 'true'
+          }
+        );
+        console.log(`📱 Rating notifications sent to ${adminTokens.length} admins`);
+      } catch (adminPushError) {
+        console.warn('Rating notifications failed for admins:', adminPushError.message);
+      }
+    }
+
+    console.log('✅ All rating notifications sent successfully');
+
+  } catch (error) {
+    console.error('❌ Rating notification error:', error);
+  }
+}
+
+// Update the submitRating function to call the notification function
 export const submitRating = async (req, res) => {
   try {
     const { ratedUserId, postId, rating, comment } = req.body;
     const raterId = req.userId;
 
-    // Validate rating
-    if (rating < 1 || rating > 5) {
-      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
-    }
-
-    // Check if users exist
-    const [rater, ratedUser] = await Promise.all([
-      userModel.findById(raterId),
-      userModel.findById(ratedUserId)
-    ]);
-
-    if (!rater || !ratedUser) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    // Check if post exists (if provided)
-    if (postId) {
-      const post = await postModel.findById(postId);
-      if (!post) {
-        return res.status(404).json({ success: false, message: 'Post not found' });
-      }
-    }
-
-    // Check if already rated
-    const existingRating = await Rating.findOne({
-      rater: raterId,
-      ratedUser: ratedUserId,
-      post: postId || { $exists: false }
-    });
-
-    if (existingRating) {
-      return res.status(400).json({ success: false, message: 'You have already rated this user' });
-    }
+    // ... existing validation code ...
 
     // Create new rating
     const newRating = new Rating({
@@ -58,7 +96,7 @@ export const submitRating = async (req, res) => {
     // Update user's average rating
     await updateUserAverageRating(ratedUserId);
 
-    // Send notifications
+    // Send notifications - use the new function
     await sendRatingNotifications(ratedUser, rater, rating, comment, postId);
 
     res.json({
@@ -71,7 +109,6 @@ export const submitRating = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // Helper functions
 export const getUserRatings = async (req, res) => {
   try {

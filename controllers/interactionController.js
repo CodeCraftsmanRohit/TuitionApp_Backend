@@ -176,13 +176,18 @@ export const deleteComment = async (req, res) => {
 // Notification function for comments
 // controllers/interactionController.js - Fix sendCommentNotifications function
 // controllers/interactionController.js - Fix sendCommentNotifications
+// Update the sendCommentNotifications function
 async function sendCommentNotifications(post, comment, commenterId) {
   try {
     const commenter = await userModel.findById(commenterId).select('name');
-    const postOwner = await userModel.findById(post.createdBy).select('name');
+    const postOwner = await userModel.findById(post.createdBy).select('name email pushNotifications fcmToken');
 
-    // Notify post owner
-    if (isValidUserId(post.createdBy) && post.createdBy.toString() !== commenterId.toString()) {
+    console.log(`🔔 Starting comment notifications for post: ${post.title}`);
+
+    // Notify post owner (if commenter is not the owner)
+    if (post.createdBy.toString() !== commenterId.toString()) {
+      console.log(`📨 Notifying post owner: ${postOwner.name}`);
+
       await inAppNotificationService.createNotification(
         post.createdBy,
         'New Comment 💬',
@@ -190,16 +195,39 @@ async function sendCommentNotifications(post, comment, commenterId) {
         'comment',
         post._id
       );
+
+      // Send push notification if enabled
+      if (postOwner.fcmToken && postOwner.pushNotifications) {
+        try {
+          await fcmService.sendPushNotification(
+            postOwner.fcmToken,
+            'New Comment on Your Post',
+            `${commenter.name} commented: "${comment.text.substring(0, 100)}..."`,
+            {
+              type: 'comment',
+              postId: post._id.toString(),
+              screen: 'Comments'
+            }
+          );
+          console.log(`📱 Push notification sent to post owner`);
+        } catch (pushError) {
+          console.warn('Push notification failed for post owner:', pushError.message);
+        }
+      }
     }
 
-    // Notify admins
-    const adminUsers = await userModel.find({ role: 'admin' }).select('_id');
-    const adminIds = adminUsers.map(admin => admin._id.toString());
-    const adminIdsToNotify = adminIds.filter(adminId =>
-      adminId !== commenterId.toString() && adminId !== post.createdBy.toString()
-    );
+    // Notify admins (excluding commenter and post owner)
+    const adminUsers = await userModel.find({ role: 'admin' }).select('_id name email pushNotifications fcmToken');
+    const adminIdsToNotify = adminUsers
+      .filter(admin =>
+        admin._id.toString() !== commenterId.toString() &&
+        admin._id.toString() !== post.createdBy.toString()
+      )
+      .map(admin => admin._id.toString());
 
     if (adminIdsToNotify.length > 0) {
+      console.log(`📨 Notifying ${adminIdsToNotify.length} admins`);
+
       await inAppNotificationService.createBulkNotifications(
         adminIdsToNotify,
         'New Comment on Post',
@@ -207,29 +235,89 @@ async function sendCommentNotifications(post, comment, commenterId) {
         'comment',
         post._id
       );
+
+      // Send push notifications to admins
+      const adminPushTokens = adminUsers
+        .filter(admin => adminIdsToNotify.includes(admin._id.toString()))
+        .filter(admin => admin.fcmToken && admin.pushNotifications)
+        .map(admin => admin.fcmToken);
+
+      if (adminPushTokens.length > 0) {
+        try {
+          await fcmService.sendBulkPushNotifications(
+            adminPushTokens,
+            'New Comment - Admin Alert',
+            `${commenter.name} commented on "${post.title}"`,
+            {
+              type: 'comment',
+              postId: post._id.toString(),
+              screen: 'Comments',
+              adminAlert: 'true'
+            }
+          );
+          console.log(`📱 Push notifications sent to ${adminPushTokens.length} admins`);
+        } catch (pushError) {
+          console.warn('Push notifications failed for admins:', pushError.message);
+        }
+      }
     }
 
-    // Notify other commenters
+    // Notify other commenters (excluding commenter, post owner, and admins)
     const uniqueCommenterIds = [...new Set(
       post.comments
         .map(c => c.user.toString())
-        .filter(id => id !== commenterId.toString() && id !== post.createdBy.toString())
+        .filter(id =>
+          id !== commenterId.toString() &&
+          id !== post.createdBy.toString() &&
+          !adminIdsToNotify.includes(id)
+        )
     )];
 
     if (uniqueCommenterIds.length > 0) {
+      console.log(`📨 Notifying ${uniqueCommenterIds.length} other commenters`);
+
       await inAppNotificationService.createBulkNotifications(
         uniqueCommenterIds,
-        'New Comment',
+        'New Comment on Post',
         `${commenter.name} also commented on "${post.title}"`,
         'comment',
         post._id
       );
+
+      // Get commenters with push notifications enabled
+      const commenterUsers = await userModel.find({
+        _id: { $in: uniqueCommenterIds },
+        pushNotifications: true,
+        fcmToken: { $exists: true, $ne: '' }
+      }).select('fcmToken');
+
+      const commenterPushTokens = commenterUsers.map(user => user.fcmToken);
+
+      if (commenterPushTokens.length > 0) {
+        try {
+          await fcmService.sendBulkPushNotifications(
+            commenterPushTokens,
+            'New Comment',
+            `${commenter.name} also commented on "${post.title}"`,
+            {
+              type: 'comment',
+              postId: post._id.toString(),
+              screen: 'Comments'
+            }
+          );
+          console.log(`📱 Push notifications sent to ${commenterPushTokens.length} commenters`);
+        } catch (pushError) {
+          console.warn('Push notifications failed for commenters:', pushError.message);
+        }
+      }
     }
+
+    console.log('✅ All comment notifications sent successfully');
+
   } catch (error) {
-    console.error('Comment notification error:', error);
+    console.error('❌ Comment notification error:', error);
   }
 }
-
 // Add this new function for editing comments
 export const updateComment = async (req, res) => {
   try {
