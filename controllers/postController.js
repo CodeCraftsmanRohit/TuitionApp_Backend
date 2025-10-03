@@ -87,6 +87,15 @@ export const createPost = async (req, res) => {
       }
     })();
 
+    (async () => {
+  try {
+    const emailResult = await sendNewPostEmailNotifications(updatedPost);
+    console.log('📧 Email notification result:', emailResult);
+  } catch (emailErr) {
+    console.warn('⚠️ Email notification failed (non-blocking):', emailErr?.message || emailErr);
+  }
+})();
+
   } catch (err) {
     console.error('Create post server error (before response):', err);
     // If response already sent above, we don't try to send again. Only send if headers not sent.
@@ -197,6 +206,73 @@ export async function sendEmailNotifications(teachers, post) {
   return results;
 }
 
+// Add this function to send email notifications for new posts
+async function sendNewPostEmailNotifications(post) {
+  try {
+    console.log('📧 Starting email notifications for new post...');
+
+    // Get all users (both teachers and admins) who want email notifications
+    const allUsers = await userModel.find({
+      emailNotifications: true,
+      email: { $exists: true, $ne: '' }
+    }).lean();
+
+    console.log(`📋 Found ${allUsers.length} users for email notifications`);
+
+    if (allUsers.length === 0) {
+      console.log('⚠️ No users found for email notifications');
+      return;
+    }
+
+    const emailPromises = allUsers.map(async (user) => {
+      try {
+        const mailOptions = {
+          from: process.env.SENDER_EMAIL,
+          to: user.email,
+          subject: '🎓 New Tuition Opportunity Available!',
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #1976D2;">New Tuition Opportunity!</h2>
+              <div style="background: #f5f5f5; padding: 20px; border-radius: 8px;">
+                <h3>${post.title}</h3>
+                <p><strong>Class:</strong> ${post.class}</p>
+                <p><strong>Subject:</strong> ${post.subject}</p>
+                <p><strong>Board:</strong> ${post.board}</p>
+                <p><strong>Salary:</strong> ₹${post.salary}</p>
+                <p><strong>Time:</strong> ${post.time}</p>
+                <p><strong>Address:</strong> ${post.address}</p>
+                <p><strong>Gender Preference:</strong> ${post.genderPreference || 'Any'}</p>
+              </div>
+              <p>Check the Tuition App for more details and to apply.</p>
+              <hr>
+              <p style="color: #666; font-size: 12px;">
+                This is an automated notification from Tuition App.
+              </p>
+            </div>
+          `,
+        };
+
+        await emailService.sendMail(mailOptions);
+        console.log(`✅ Email sent to: ${user.email}`);
+        return { email: user.email, success: true };
+      } catch (emailErr) {
+        console.warn(`❌ Failed to send email to ${user.email}:`, emailErr.message);
+        return { email: user.email, success: false, error: emailErr.message };
+      }
+    });
+
+    const results = await Promise.allSettled(emailPromises);
+    const successful = results.filter(r => r.status === 'fulfilled' && r.value.success);
+
+    console.log(`✅ Email notifications completed: ${successful.length}/${allUsers.length} successful`);
+    return { success: true, sent: successful.length, total: allUsers.length };
+
+  } catch (error) {
+    console.error('❌ Email notification error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // WhatsApp notifications
 export async function sendWhatsAppNotifications(teachers, post) {
   try {
@@ -245,6 +321,7 @@ export const getAllPosts = async (req, res) => {
   }
 };
 
+// Update the updatePost function
 export const updatePost = async (req, res) => {
   const postId = req.params.id;
   const userId = req.userId;
@@ -255,18 +332,26 @@ export const updatePost = async (req, res) => {
     const post = await postModel.findById(postId);
     if (!post) return res.status(404).json({ success: false, message: 'Post not found' });
 
+    // Check if user owns the post OR is admin
     if (post.createdBy.toString() !== userId && userRole !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Not authorized' });
+      return res.status(403).json({ success: false, message: 'Not authorized to edit this post' });
     }
 
-    // Update logic...
-    const updated = await postModel.findByIdAndUpdate(postId, updateData, { new: true });
-    return res.json({ success: true, message: 'Post updated', post: updated });
+    const updated = await postModel.findByIdAndUpdate(postId, updateData, { new: true })
+      .populate('createdBy', 'name profilePhoto');
+
+    return res.json({
+      success: true,
+      message: 'Post updated successfully',
+      post: updated
+    });
   } catch (err) {
+    console.error('Update post error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
 
+// Update the deletePost function
 export const deletePost = async (req, res) => {
   const postId = req.params.id;
   const userId = req.userId;
@@ -276,13 +361,22 @@ export const deletePost = async (req, res) => {
     const post = await postModel.findById(postId);
     if (!post) return res.status(404).json({ success: false, message: 'Post not found' });
 
+    // Check if user owns the post OR is admin
     if (post.createdBy.toString() !== userId && userRole !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Not authorized' });
+      return res.status(403).json({ success: false, message: 'Not authorized to delete this post' });
     }
 
     await postModel.findByIdAndDelete(postId);
-    return res.json({ success: true, message: 'Post deleted' });
+
+    // Also delete associated favorites
+    await Favorite.deleteMany({ post: postId });
+
+    return res.json({
+      success: true,
+      message: 'Post deleted successfully'
+    });
   } catch (err) {
+    console.error('Delete post error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };

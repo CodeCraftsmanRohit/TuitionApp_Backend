@@ -154,7 +154,7 @@ export const deleteComment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Comment not found' });
     }
 
-    // Check if user owns the comment or is admin
+    // Check if user owns the comment OR is admin
     const user = await userModel.findById(userId);
     if (comment.user.toString() !== userId && user.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this comment' });
@@ -173,7 +173,6 @@ export const deleteComment = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // Notification function for comments
 // controllers/interactionController.js - Fix sendCommentNotifications function
 // controllers/interactionController.js - Fix sendCommentNotifications
@@ -230,3 +229,50 @@ async function sendCommentNotifications(post, comment, commenterId) {
     console.error('Comment notification error:', error);
   }
 }
+
+// Add this new function for editing comments
+export const updateComment = async (req, res) => {
+  try {
+    const { postId, commentId } = req.params;
+    const { text } = req.body;
+    const userId = req.userId;
+
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ success: false, message: 'Comment text is required' });
+    }
+
+    const post = await postModel.findById(postId);
+    if (!post) {
+      return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    const comment = post.comments.id(commentId);
+    if (!comment) {
+      return res.status(404).json({ success: false, message: 'Comment not found' });
+    }
+
+    // Check if user owns the comment
+    if (comment.user.toString() !== userId) {
+      return res.status(403).json({ success: false, message: 'Not authorized to edit this comment' });
+    }
+
+    comment.text = text.trim();
+    comment.updatedAt = new Date();
+
+    await post.save();
+
+    // Populate the updated comment for response
+    await post.populate('comments.user', 'name profilePhoto');
+
+    const updatedComment = post.comments.id(commentId);
+
+    return res.json({
+      success: true,
+      message: 'Comment updated successfully',
+      comment: updatedComment
+    });
+  } catch (error) {
+    console.error('Update comment error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};

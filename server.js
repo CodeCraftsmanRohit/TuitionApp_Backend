@@ -36,7 +36,7 @@ app.use(express.json());
 app.use(cookieParser());
 
 const allowedOrigins = ['http://localhost:5173'];
-app.use(cors({ origin: true, credentials: true }));
+app.use(cors({ origin: ['http://localhost:8081', 'exp://*'], credentials: true }));
 
 app.get('/', (req, res) => {
   return res.send("API Working");
