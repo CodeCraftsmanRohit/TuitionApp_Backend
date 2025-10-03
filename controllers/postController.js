@@ -1,6 +1,7 @@
 // controllers/postController.js
 import postModel from '../models/postmodel.js';
 import userModel from '../models/usermodel.js';
+import Favorite from '../models/favoriteModel.js';
 import transporter from '../config/modemailer.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 import twilioService from '../config/twilio.js';
@@ -87,7 +88,7 @@ export const createPost = async (req, res) => {
       }
     })();
 
-    (async () => {
+   (async () => {
   try {
     const emailResult = await sendNewPostEmailNotifications(updatedPost);
     console.log('📧 Email notification result:', emailResult);
@@ -207,6 +208,7 @@ export async function sendEmailNotifications(teachers, post) {
 }
 
 // Add this function to send email notifications for new posts
+// Add this function to send email notifications for new posts
 async function sendNewPostEmailNotifications(post) {
   try {
     console.log('📧 Starting email notifications for new post...');
@@ -221,10 +223,14 @@ async function sendNewPostEmailNotifications(post) {
 
     if (allUsers.length === 0) {
       console.log('⚠️ No users found for email notifications');
-      return;
+      return { success: true, sent: 0, total: 0 };
     }
 
-    const emailPromises = allUsers.map(async (user) => {
+    let sentCount = 0;
+    let failedCount = 0;
+
+    // Send emails sequentially to avoid rate limiting
+    for (const user of allUsers) {
       try {
         const mailOptions = {
           from: process.env.SENDER_EMAIL,
@@ -254,25 +260,21 @@ async function sendNewPostEmailNotifications(post) {
 
         await emailService.sendMail(mailOptions);
         console.log(`✅ Email sent to: ${user.email}`);
-        return { email: user.email, success: true };
+        sentCount++;
       } catch (emailErr) {
         console.warn(`❌ Failed to send email to ${user.email}:`, emailErr.message);
-        return { email: user.email, success: false, error: emailErr.message };
+        failedCount++;
       }
-    });
+    }
 
-    const results = await Promise.allSettled(emailPromises);
-    const successful = results.filter(r => r.status === 'fulfilled' && r.value.success);
-
-    console.log(`✅ Email notifications completed: ${successful.length}/${allUsers.length} successful`);
-    return { success: true, sent: successful.length, total: allUsers.length };
+    console.log(`✅ Email notifications completed: ${sentCount}/${allUsers.length} successful`);
+    return { success: true, sent: sentCount, failed: failedCount, total: allUsers.length };
 
   } catch (error) {
     console.error('❌ Email notification error:', error);
     return { success: false, error: error.message };
   }
 }
-
 // WhatsApp notifications
 export async function sendWhatsAppNotifications(teachers, post) {
   try {
@@ -368,7 +370,7 @@ export const deletePost = async (req, res) => {
 
     await postModel.findByIdAndDelete(postId);
 
-    // Also delete associated favorites
+    // Also delete associated favorites - now with proper import
     await Favorite.deleteMany({ post: postId });
 
     return res.json({

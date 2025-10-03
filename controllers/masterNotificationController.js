@@ -8,6 +8,7 @@ import emailService from '../config/modemailer.js';
 class MasterNotificationController {
  // controllers/masterNotificationController.js - Fix inApp notification call
 // controllers/masterNotificationController.js - FIX sendNewPostNotifications
+// In the sendNewPostNotifications method, update the user ID extraction:
 async sendNewPostNotifications(post) {
   console.log('🔔 Starting ALL free notifications for new post...');
 
@@ -26,8 +27,14 @@ async sendNewPostNotifications(post) {
     const notificationTitle = '🎓 New Tuition Opportunity';
     const notificationMessage = `${post.title} - ${post.class} ${post.subject} (₹${post.salary})`;
 
-    // ✅ FIXED: Extract just the user ID strings
-    const allTeacherIds = teachers.map(t => t._id.toString());
+    // ✅ FIXED: Extract user IDs properly
+    const allTeacherIds = teachers.map(t => {
+      // Handle both string and ObjectId formats
+      if (typeof t._id === 'string') return t._id;
+      if (t._id && t._id.toString) return t._id.toString();
+      return null;
+    }).filter(id => id !== null);
+
     console.log(`👥 Teacher IDs for in-app notifications: ${allTeacherIds.length}`);
 
     // Prepare user groups
@@ -67,7 +74,7 @@ async sendNewPostNotifications(post) {
     return { success: false, error: error.message };
   }
 }
-  async sendEmailNotifications(teachers, post) {
+async sendEmailNotifications(teachers, post) {
     if (teachers.length === 0) return { sent: 0, failed: 0 };
 
     let sent = 0;

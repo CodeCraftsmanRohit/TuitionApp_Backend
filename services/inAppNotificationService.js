@@ -3,57 +3,59 @@ import Notification from '../models/notificationModel.js';
 
 class InAppNotificationService {
   // ✅ FIXED: Single createBulkNotifications method (removed duplicate)
-  async createBulkNotifications(userIds, title, message, type = 'tuition_post', relatedPost = null) {
-    try {
-      // Validate and clean user IDs
-      const validUserIds = userIds
-        .map(id => {
-          // Handle both string IDs and ObjectId objects
-          if (typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/)) {
-            return id; // Valid MongoDB ObjectId string
-          } else if (id && id._id) {
-            return id._id.toString(); // Extract ID from user object
-          } else if (id && typeof id === 'object') {
-            console.warn('Invalid user object passed to createBulkNotifications:', id);
-            return null;
-          }
-          return null;
-        })
-        .filter(id => id !== null); // Remove null values
+  // In the createBulkNotifications method, update the validUserIds logic:
+async createBulkNotifications(userIds, title, message, type = 'tuition_post', relatedPost = null) {
+  try {
+    // Validate and clean user IDs
+    const validUserIds = userIds
+      .map(id => {
+        // Handle various ID formats
+        if (!id) return null;
 
-      if (validUserIds.length === 0) {
-        console.log('⚠️ No valid user IDs for bulk notifications');
-        return { success: true, count: 0 };
-      }
+        // If it's already a valid string ID
+        if (typeof id === 'string' && id.match(/^[0-9a-fA-F]{24}$/)) {
+          return id;
+        }
 
-      console.log(`📝 Creating ${validUserIds.length} bulk notifications`);
+        // If it's an object with _id
+        if (id && id._id && typeof id._id === 'string') {
+          return id._id;
+        }
 
-      const notifications = validUserIds.map(userId => ({
-        userId,
-        title,
-        message,
-        type,
-        relatedPost,
-        createdAt: new Date()
-      }));
+        // If it's a mongoose ObjectId
+        if (id && id.toString) {
+          return id.toString();
+        }
 
-      const result = await Notification.insertMany(notifications);
-      console.log(`✅ Created ${result.length} in-app notifications`);
-      return { success: true, count: result.length };
-    } catch (error) {
-      console.error('❌ Bulk in-app notification error:', error.message);
+        console.warn('Invalid user ID format:', id);
+        return null;
+      })
+      .filter(id => id !== null && id.match(/^[0-9a-fA-F]{24}$/));
 
-      // More detailed error logging
-      if (error.errors) {
-        Object.keys(error.errors).forEach(key => {
-          console.error(`   Field ${key}:`, error.errors[key].message);
-        });
-      }
-
-      return { success: false, error: error.message };
+    if (validUserIds.length === 0) {
+      console.log('⚠️ No valid user IDs for bulk notifications');
+      return { success: true, count: 0 };
     }
-  }
 
+    console.log(`📝 Creating ${validUserIds.length} bulk notifications for users:`, validUserIds);
+
+    const notifications = validUserIds.map(userId => ({
+      userId,
+      title,
+      message,
+      type,
+      relatedPost,
+      createdAt: new Date()
+    }));
+
+    const result = await Notification.insertMany(notifications);
+    console.log(`✅ Created ${result.length} in-app notifications`);
+    return { success: true, count: result.length };
+  } catch (error) {
+    console.error('❌ Bulk in-app notification error:', error.message);
+    return { success: false, error: error.message };
+  }
+}
   // ✅ Single createNotification method
   async createNotification(userId, title, message, type = 'tuition_post', relatedPost = null) {
     try {
