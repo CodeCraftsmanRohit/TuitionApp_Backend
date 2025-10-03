@@ -430,21 +430,24 @@ export const deletePost = async (req, res) => {
 };
 
 // Add to controllers/postController.js
+// Add to controllers/postController.js
 export const getUserLikes = async (req, res) => {
   try {
     const userId = req.params.userId;
 
-    const postsWithLikes = await postModel.find({
+    // Find all posts that this user has liked
+    const posts = await postModel.find({
       'likes.user': userId
     })
     .populate('createdBy', 'name profilePhoto')
     .select('title image likes createdAt')
     .sort({ createdAt: -1 });
 
-    const likes = postsWithLikes.map(post => {
+    // Extract the like information
+    const userLikes = posts.map(post => {
       const userLike = post.likes.find(like => like.user.toString() === userId);
       return {
-        _id: userLike?._id,
+        _id: userLike?._id || post._id, // fallback to post id if like id doesn't exist
         post: {
           _id: post._id,
           title: post.title,
@@ -453,11 +456,11 @@ export const getUserLikes = async (req, res) => {
         },
         createdAt: userLike?.createdAt || post.createdAt
       };
-    });
+    }).filter(like => like._id); // Filter out any null entries
 
     res.json({
       success: true,
-      likes
+      likes: userLikes
     });
   } catch (error) {
     console.error('Get user likes error:', error);
@@ -469,18 +472,20 @@ export const getUserComments = async (req, res) => {
   try {
     const userId = req.params.userId;
 
-    const postsWithComments = await postModel.find({
+    // Find all posts where this user has commented
+    const posts = await postModel.find({
       'comments.user': userId
     })
     .populate('createdBy', 'name profilePhoto')
     .select('title image comments createdAt')
     .sort({ createdAt: -1 });
 
-    const comments = [];
-    postsWithComments.forEach(post => {
+    // Extract the comments
+    const userComments = [];
+    posts.forEach(post => {
       post.comments.forEach(comment => {
         if (comment.user.toString() === userId) {
-          comments.push({
+          userComments.push({
             _id: comment._id,
             post: {
               _id: post._id,
@@ -495,12 +500,12 @@ export const getUserComments = async (req, res) => {
       });
     });
 
-    // Sort comments by date
-    comments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    // Sort comments by date (newest first)
+    userComments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     res.json({
       success: true,
-      comments
+      comments: userComments
     });
   } catch (error) {
     console.error('Get user comments error:', error);

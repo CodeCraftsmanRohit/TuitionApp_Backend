@@ -14,5 +14,4 @@ postRouter.put('/:id', userAuth, updatePost); // Both users and admins can use t
 postRouter.delete('/:id', userAuth, deletePost); // Both users and admins can use this
 // Add to routes/postRoutes.js
 postRouter.get('/user/:userId/likes', userAuth, getUserLikes);
-postRouter.get('/user/:userId/comments', userAuth, getUserComments);
-export default postRouter;
+postRouter.get('/user/:userId/comments', userAuth, getUserComments);export default postRouter;
