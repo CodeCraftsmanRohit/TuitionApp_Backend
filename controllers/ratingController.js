@@ -264,8 +264,8 @@ export const getUserRatings = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const ratings = await Rating.find({ ratedUser: userId })
-      .populate('rater', 'name profilePhoto')
-      .populate('post', 'title')
+      .populate('rater', 'name profilePhoto') // ✅ Uses 'user' model automatically via ref
+      .populate('post', 'title') // ✅ Uses 'post' model automatically via ref
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -361,8 +361,8 @@ export const getRatingsByUser = async (req, res) => {
     const { userId } = req.params;
 
     const ratings = await Rating.find({ rater: mongoose.Types.ObjectId(userId) })
-      .populate('ratedUser', 'name profilePhoto')
-      .populate('post', 'title')
+      .populate('ratedUser', 'name profilePhoto') // ✅ Uses 'user' model
+      .populate('post', 'title') // ✅ Uses 'post' model
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -374,7 +374,6 @@ export const getRatingsByUser = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to fetch ratings', error: error.message });
   }
 };
-
 /**
  * addUserRating - alternate endpoint (keeps original behavior)
  */

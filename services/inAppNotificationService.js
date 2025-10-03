@@ -80,12 +80,12 @@ async createBulkNotifications(userIds, title, message, type = 'tuition_post', re
     try {
       const skip = (page - 1) * limit;
 
-      const notifications = await Notification.find({ userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('relatedPost', 'title class subject salary')
-        .lean();
+     const notifications = await Notification.find({ userId })
+  .sort({ createdAt: -1 })
+  .skip(skip)
+  .limit(limit)
+  .populate('relatedPost', 'title class subject salary') // ✅ Uses 'post' model
+  .lean();
 
       const total = await Notification.countDocuments({ userId });
       const unreadCount = await Notification.countDocuments({

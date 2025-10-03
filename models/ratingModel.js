@@ -6,17 +6,17 @@ const ratingSchema = new Schema(
   {
     ratedUser: {
       type: Types.ObjectId,
-      ref: 'User',
+      ref: 'user', // ✅ Use 'user' (lowercase)
       required: true,
     },
     rater: {
       type: Types.ObjectId,
-      ref: 'User',
+      ref: 'user', // ✅ Use 'user' (lowercase)
       required: true,
     },
     post: {
       type: Types.ObjectId,
-      ref: 'Post',
+      ref: 'post', // ✅ Use 'post' (lowercase)
       default: null,
     },
     rating: {
@@ -44,5 +44,5 @@ ratingSchema.index({ rater: 1, ratedUser: 1, post: 1 }, {
 ratingSchema.index({ ratedUser: 1, createdAt: -1 });
 ratingSchema.index({ rater: 1, createdAt: -1 });
 
-const Rating = model('Rating', ratingSchema);
+const Rating = mongoose.models.Rating || mongoose.model('Rating', ratingSchema);
 export default Rating;
