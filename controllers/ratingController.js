@@ -211,33 +211,7 @@ export const canUserRate = async (req, res) => {
 };
 
 
-async function sendRatingNotifications(ratedUser, rater, rating, comment, postId) {
-  try {
-    const message = comment
-      ? `${rater.name} rated you ${rating} stars: "${comment}"`
-      : `${rater.name} rated you ${rating} stars`;
 
-    // In-app notification
-    await inAppNotificationService.createNotification(
-      ratedUser._id,
-      'New Rating ⭐',
-      message,
-      'rating'
-    );
-
-    // Push notification if enabled
-    if (ratedUser.fcmToken && ratedUser.pushNotifications) {
-      await fcmService.sendRatingNotification(
-        ratedUser.fcmToken,
-        rater.name,
-        rating,
-        comment
-      );
-    }
-  } catch (error) {
-    console.error('Rating notification error:', error);
-  }
-}
 export const getRatingsByUser = async (req, res) => {
   try {
     const { userId } = req.params;
