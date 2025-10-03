@@ -11,4 +11,6 @@ postRouter.post('/', userAuth, upload.single('image'), createPost);
 postRouter.get('/', userAuth, getAllPosts);
 postRouter.put('/:id', adminAuth, updatePost);
 postRouter.delete('/:id', adminAuth, deletePost);
+postRouter.put('/:id', userAuth, updatePost);
+postRouter.delete('/:id', userAuth, deletePost);
 export default postRouter;

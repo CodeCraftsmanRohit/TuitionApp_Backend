@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 // Import jsonwebtoken to create signed JWT tokens for user authentication
 import jwt from "jsonwebtoken";
 
-
+import { WELCOME_EMAIL_TEMPLATE } from '../config/emailTemplates.js';
 import twilioService from '../config/twilio.js';
 // Import the user model from the models directory
 import userModel from '../models/usermodel.js'
@@ -38,7 +38,6 @@ export const register = async (req, res) => {
 
     await user.save();
 
-    // Rest of registration logic remains the same...
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
@@ -53,39 +52,40 @@ export const register = async (req, res) => {
     });
 
     // Send welcome message on WhatsApp if phone provided
-   // In register function, fix the WhatsApp welcome message:
-if (phone) {
-  try {
-    const welcomeMessage = `Welcome to Tuition App, ${name}! 🎓\n\nYour account has been created successfully.\nEmail: ${email}\n\nYou will receive notifications about new tuition opportunities via WhatsApp.\n\nThank you for joining!`;
-    await twilioService.sendWhatsAppMessage(`whatsapp:${phone.replace(/\D/g, '')}`, welcomeMessage);
-  } catch (whatsappError) {
-    console.log('Welcome WhatsApp message failed:', whatsappError.message);
-    // Don't block registration if WhatsApp fails
-  }
-}
-    // Send email (best-effort; don't block registration)
+    if (phone) {
+      try {
+        const welcomeMessage = `Welcome to Tuition App, ${name}! 🎓\n\nYour account has been created successfully.\nEmail: ${email}\n\nYou will receive notifications about new tuition opportunities via WhatsApp.\n\nThank you for joining!`;
+        await twilioService.sendWhatsAppMessage(`whatsapp:${phone.replace(/\D/g, '')}`, welcomeMessage);
+        console.log(`✅ WhatsApp welcome sent to ${phone}`);
+      } catch (whatsappError) {
+        console.log('⚠️ Welcome WhatsApp message failed:', whatsappError.message);
+        // Don't block registration
+      }
+    }
+
+    // Send welcome email (non-blocking)
     try {
       const isEmailReady = await emailService.verify();
       if (isEmailReady) {
         const mailOptions = {
           from: process.env.SENDER_EMAIL,
           to: email,
-          subject: "Welcome to My Website",
-          text: `Welcome to my website. Your account has been created with email id: ${email}`,
+          subject: "Welcome to Tuition App!",
+          html: WELCOME_EMAIL_TEMPLATE.replace('{{email}}', email)  // Use template from emailTemplates.js
         };
         await emailService.sendMail(mailOptions);
         console.log(`✅ Welcome email sent to: ${email}`);
       } else {
-        console.log(`⚠️ Email service not available, but user registered: ${email}`);
+        console.log(`⚠️ Email service not ready for ${email}`);
       }
     } catch (emailError) {
-      console.error(`❌ Email failed but user registered: ${emailError.message}`);
+      console.error(`❌ Welcome email failed for ${email}: ${emailError.message}`);
+      // Continue registration
     }
 
     console.log(`✅ User registered: ${email} (${name})`);
 
-    // return token and user details (including role) so mobile can store token
-     return res.json({
+    return res.json({
       success: true,
       message: "User registered successfully",
       token,
@@ -98,6 +98,7 @@ if (phone) {
       },
     });
   } catch (error) {
+    console.error('Registration error:', error);
     return res.json({ success: false, message: error.message });
   }
 };

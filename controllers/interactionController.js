@@ -182,11 +182,8 @@ async function sendCommentNotifications(post, comment, commenterId) {
     const commenter = await userModel.findById(commenterId).select('name');
     const postOwner = await userModel.findById(post.createdBy).select('name');
 
-    // Don't notify if user comments on their own post
-    if (post.createdBy.toString() === commenterId) return;
-
-    // Notify post owner (this is working ✅)
-    if (isValidUserId(post.createdBy)) {
+    // Notify post owner
+    if (isValidUserId(post.createdBy) && post.createdBy.toString() !== commenterId.toString()) {
       await inAppNotificationService.createNotification(
         post.createdBy,
         'New Comment 💬',
@@ -196,19 +193,12 @@ async function sendCommentNotifications(post, comment, commenterId) {
       );
     }
 
-    // ✅ FIXED: Notify admin users - get full admin objects first
-    const adminUsers = await userModel.find({ role: 'admin' }).select('_id').lean();
-    console.log('📋 Admin users found:', adminUsers); // Debug log
-
-    // Extract just the ID strings
+    // Notify admins
+    const adminUsers = await userModel.find({ role: 'admin' }).select('_id');
     const adminIds = adminUsers.map(admin => admin._id.toString());
-    console.log('👥 Admin IDs extracted:', adminIds); // Debug log
-
-    // Don't notify admin if they are the commenter
     const adminIdsToNotify = adminIds.filter(adminId =>
       adminId !== commenterId.toString() && adminId !== post.createdBy.toString()
     );
-    console.log('📤 Admin IDs to notify:', adminIdsToNotify); // Debug log
 
     if (adminIdsToNotify.length > 0) {
       await inAppNotificationService.createBulkNotifications(
@@ -218,41 +208,25 @@ async function sendCommentNotifications(post, comment, commenterId) {
         'comment',
         post._id
       );
-    } else {
-      console.log('ℹ️ No admin users to notify (might be commenter or post owner)');
     }
 
-    // ✅ FIXED: Notify other users who commented on the same post
-    // Get unique commenter IDs from the post
+    // Notify other commenters
     const uniqueCommenterIds = [...new Set(
       post.comments
-        .map(comment => comment.user.toString())
-        .filter(id => id && id.match(/^[0-9a-fA-F]{24}$/))
+        .map(c => c.user.toString())
+        .filter(id => id !== commenterId.toString() && id !== post.createdBy.toString())
     )];
 
-    console.log('💬 Unique commenter IDs:', uniqueCommenterIds); // Debug log
-
-    const usersToNotify = uniqueCommenterIds.filter(userId =>
-      userId !== commenterId.toString() &&
-      userId !== post.createdBy.toString() &&
-      isValidUserId(userId)
-    );
-
-    console.log('📤 Commenters to notify:', usersToNotify); // Debug log
-
-    if (usersToNotify.length > 0) {
+    if (uniqueCommenterIds.length > 0) {
       await inAppNotificationService.createBulkNotifications(
-        usersToNotify,
+        uniqueCommenterIds,
         'New Comment',
         `${commenter.name} also commented on "${post.title}"`,
         'comment',
         post._id
       );
-    } else {
-      console.log('ℹ️ No other commenters to notify');
     }
-
   } catch (error) {
-    console.error('❌ Comment notification error:', error);
+    console.error('Comment notification error:', error);
   }
 }

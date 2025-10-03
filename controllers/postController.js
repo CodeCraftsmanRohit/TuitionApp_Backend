@@ -231,37 +231,44 @@ export const getAllPosts = async (req, res) => {
   }
 };
 
-// Admin-only: update a post
 export const updatePost = async (req, res) => {
   const postId = req.params.id;
+  const userId = req.userId;
+  const userRole = req.userRole;
   const updateData = { ...req.body };
 
-  // If salary present, validate/cast
-  if (updateData.salary !== undefined) {
-    const s = Number(updateData.salary);
-    if (!Number.isFinite(s)) return res.status(400).json({ success: false, message: 'Salary must be a valid number' });
-    updateData.salary = s;
-  }
-
   try {
-    const updated = await postModel.findByIdAndUpdate(postId, updateData, { new: true, runValidators: true });
-    if (!updated) return res.status(404).json({ success: false, message: 'Post not found' });
+    const post = await postModel.findById(postId);
+    if (!post) return res.status(404).json({ success: false, message: 'Post not found' });
+
+    if (post.createdBy.toString() !== userId && userRole !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    // Update logic...
+    const updated = await postModel.findByIdAndUpdate(postId, updateData, { new: true });
     return res.json({ success: true, message: 'Post updated', post: updated });
   } catch (err) {
-    console.error('Update post error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
 
-// Admin-only: delete a post
 export const deletePost = async (req, res) => {
   const postId = req.params.id;
+  const userId = req.userId;
+  const userRole = req.userRole;
+
   try {
-    const deleted = await postModel.findByIdAndDelete(postId);
-    if (!deleted) return res.status(404).json({ success: false, message: 'Post not found' });
+    const post = await postModel.findById(postId);
+    if (!post) return res.status(404).json({ success: false, message: 'Post not found' });
+
+    if (post.createdBy.toString() !== userId && userRole !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    await postModel.findByIdAndDelete(postId);
     return res.json({ success: true, message: 'Post deleted' });
   } catch (err) {
-    console.error('Delete post error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
