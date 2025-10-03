@@ -1,4 +1,3 @@
-// config/modemailer.js
 /**
  * Brevo-first mailer with correct ESM usage of @getbrevo/brevo and SMTP fallback.
  * - Requires BREVO_API_KEY env var to use Brevo HTTP API.
@@ -49,56 +48,63 @@ class Mailer {
     return this.transporter;
   }
 
-  // Primary: send via Brevo API using named exports properly
+  // Primary: send via Brevo API with robust module handling
   async sendViaBrevo(mailOptions) {
-    if (!this.brevoKey) throw new Error('BREVO_API_KEY not set');
+  if (!this.brevoKey) throw new Error('BREVO_API_KEY not set');
 
-    try {
-      // import module namespace
-      const BrevoModule = await import('@getbrevo/brevo');
-      // extract named exports (works for both default and named shapes)
-      const Brevo = BrevoModule.default || BrevoModule;
-      const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = Brevo;
+  try {
+    const toArray = Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to];
+    const to = toArray.map(recipient => ({
+      email: typeof recipient === 'string' ? recipient : (recipient.address || recipient.email)
+    }));
 
-      if (!TransactionalEmailsApi || !ApiClient || !SendSmtpEmail) {
-        throw new Error('Unexpected Brevo module shape — required classes missing');
-      }
+    const payload = {
+      sender: {
+        email: process.env.SENDER_EMAIL || mailOptions.from || 'noreply@example.com'
+      },
+      to: to,
+      subject: mailOptions.subject,
+      htmlContent: mailOptions.html,
+      textContent: mailOptions.text
+    };
 
-      const client = new TransactionalEmailsApi();
-      // set API key on ApiClient.instance
-      ApiClient.instance.authentications['api-key'].apiKey = this.brevoKey;
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': this.brevoKey,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
 
-      // Build recipients array
-      const toAddrs = Array.isArray(mailOptions.to)
-        ? mailOptions.to.map(t => ({ email: typeof t === 'string' ? t : t.address || t.email }))
-        : [{ email: typeof mailOptions.to === 'string' ? mailOptions.to : (mailOptions.to?.address || mailOptions.to?.email) }];
-
-      const senderEmail = process.env.SENDER_EMAIL || mailOptions.from || (mailOptions.sender && mailOptions.sender.email);
-
-      const payload = new SendSmtpEmail({
-        sender: { email: senderEmail },
-        to: toAddrs,
-        subject: mailOptions.subject,
-        htmlContent: mailOptions.html,
-        textContent: mailOptions.text,
-      });
-
-      const resp = await client.sendTransacEmail(payload);
-      console.log('✅ Brevo API send successful:', resp);
-      return resp;
-    } catch (err) {
-      // log full stack for Render
-      console.error('❌ Brevo API send failed:', err && (err.stack || err.message) ? (err.stack || err.message) : err);
-      throw err;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Brevo API error: ${response.status} - ${errorText}`);
     }
+
+    const result = await response.json();
+    console.log('✅ Brevo API send successful:', result);
+    return result;
+
+  } catch (err) {
+    console.error('❌ Brevo API send failed:', err.message);
+    throw err;
   }
+}
 
   async sendViaSmtp(mailOptions) {
     const transporter = this.initSmtp();
     if (!transporter) throw new Error('SMTP transporter not available');
 
     try {
-      const info = await transporter.sendMail(mailOptions);
+      // Ensure proper from address
+      const finalMailOptions = {
+        ...mailOptions,
+        from: mailOptions.from || process.env.SENDER_EMAIL
+      };
+
+      const info = await transporter.sendMail(finalMailOptions);
       console.log('✅ sendMail via SMTP success:', {
         messageId: info?.messageId,
         accepted: info?.accepted,
