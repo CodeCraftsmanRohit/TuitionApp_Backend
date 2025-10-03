@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const notificationSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'user', // ✅ Use 'user' (lowercase) to match your user model
+    ref: 'user',
     required: true
   },
   title: {
@@ -16,12 +16,12 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['tuition_post', 'application', 'message', 'system', 'like', 'comment', 'rating'], // ✅ Added 'rating'
+    enum: ['tuition_post', 'application', 'message', 'system', 'like', 'comment', 'rating', 'favorite'], // ✅ Added 'favorite'
     default: 'tuition_post'
   },
   relatedPost: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'post' // ✅ Use 'post' (lowercase) to match your post model
+    ref: 'post'
   },
   read: {
     type: Boolean,

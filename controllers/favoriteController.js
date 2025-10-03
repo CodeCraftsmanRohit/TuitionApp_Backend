@@ -1,7 +1,6 @@
-// controllers/favoriteController.js
 import Favorite from '../models/favoriteModel.js';
 import postModel from '../models/postmodel.js';
-import userModel from '../models/usermodel.js'; // <-- ADDED import
+import userModel from '../models/usermodel.js';
 import inAppNotificationService from '../services/inAppNotificationService.js';
 
 export const toggleFavorite = async (req, res) => {
@@ -45,13 +44,13 @@ export const toggleFavorite = async (req, res) => {
           const user = await userModel.findById(userId).select('name');
           const userName = user?.name || 'Someone';
 
-          // guard the notification service to avoid unhandled errors
+          // Send notification with valid type
           if (inAppNotificationService && typeof inAppNotificationService.createNotification === 'function') {
             await inAppNotificationService.createNotification(
               post.createdBy,
               'New Favorite ⭐',
               `${userName} added your post to favorites`,
-              'favorite',
+              'favorite', // ✅ This is now valid
               post._id
             );
           }
@@ -72,6 +71,7 @@ export const toggleFavorite = async (req, res) => {
   }
 };
 
+// ... rest of the file remains the same
 export const getUserFavorites = async (req, res) => {
   try {
     const userId = req.userId;
