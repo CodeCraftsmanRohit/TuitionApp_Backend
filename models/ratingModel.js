@@ -1,4 +1,3 @@
-// models/Rating.js
 import mongoose from 'mongoose';
 
 const { Schema, model, Types } = mongoose;
@@ -15,6 +14,11 @@ const ratingSchema = new Schema(
       ref: 'User',
       required: true,
     },
+    post: {
+      type: Types.ObjectId,
+      ref: 'Post',
+      default: null,
+    },
     rating: {
       type: Number,
       required: true,
@@ -30,6 +34,15 @@ const ratingSchema = new Schema(
   { timestamps: true }
 );
 
-const Rating = model('Rating', ratingSchema);
+// Sparse unique index to allow multiple null posts
+ratingSchema.index({ rater: 1, ratedUser: 1, post: 1 }, {
+  unique: true,
+  sparse: true
+});
 
+// Compound index for better query performance
+ratingSchema.index({ ratedUser: 1, createdAt: -1 });
+ratingSchema.index({ rater: 1, createdAt: -1 });
+
+const Rating = model('Rating', ratingSchema);
 export default Rating;

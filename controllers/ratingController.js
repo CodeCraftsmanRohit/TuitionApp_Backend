@@ -1,4 +1,3 @@
-// controllers/ratingController.js
 import Rating from '../models/ratingModel.js';
 import userModel from '../models/usermodel.js';
 import postModel from '../models/postmodel.js';
@@ -102,6 +101,31 @@ async function updateUserAverageRating(userId) {
 }
 
 /**
+ * Check if rating already exists
+ */
+async function checkExistingRating(raterId, ratedUserId, postId) {
+  try {
+    const query = {
+      rater: raterId,
+      ratedUser: ratedUserId
+    };
+
+    // If postId is provided, check for exact match
+    // If postId is not provided, check for ratings with null post
+    if (postId) {
+      query.post = postId;
+    } else {
+      query.post = null;
+    }
+
+    return await Rating.findOne(query);
+  } catch (error) {
+    console.error('Check existing rating error:', error);
+    return null;
+  }
+}
+
+/**
  * submitRating - robust server-side handler
  * Accepts either `ratedUser` OR `ratedUserId` in body.
  * Requires authenticated user (req.userId via userAuth middleware)
@@ -132,6 +156,11 @@ export const submitRating = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Unauthenticated: rater id missing' });
     }
 
+    // Validate rating range
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
+    }
+
     // Validate ids
     if (!mongoose.isValidObjectId(ratedUserIdFinal) || !mongoose.isValidObjectId(raterId)) {
       return res.status(400).json({ success: false, message: 'Invalid user id(s) provided' });
@@ -147,7 +176,7 @@ export const submitRating = async (req, res) => {
     }
 
     // Optional: validate postId if provided
-    let postObjId;
+    let postObjId = null;
     if (postId) {
       if (!mongoose.isValidObjectId(postId)) {
         return res.status(400).json({ success: false, message: 'Invalid postId' });
@@ -155,6 +184,15 @@ export const submitRating = async (req, res) => {
       postObjId = new mongoose.Types.ObjectId(postId);
       const exists = await postModel.findById(postObjId);
       if (!exists) return res.status(404).json({ success: false, message: 'Post not found' });
+    }
+
+    // Check for existing rating FIRST
+    const existingRating = await checkExistingRating(raterObjId, ratedUserObjId, postObjId);
+    if (existingRating) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already rated this user'
+      });
     }
 
     // Load rated user and rater docs
@@ -174,7 +212,7 @@ export const submitRating = async (req, res) => {
     const newRating = new Rating({
       rater: raterObjId,
       ratedUser: ratedUserObjId,
-      post: postObjId ? postObjId : undefined,
+      post: postObjId,
       rating,
       comment: comment ? comment.trim() : ''
     });
@@ -202,6 +240,15 @@ export const submitRating = async (req, res) => {
     });
   } catch (error) {
     console.error('Submit rating error (controller):', error);
+
+    // Handle duplicate key error specifically
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already rated this user'
+      });
+    }
+
     return res.status(500).json({ success: false, message: error.message || 'Server error' });
   }
 };
@@ -281,11 +328,19 @@ export const canUserRate = async (req, res) => {
       });
     }
 
-    const existingRating = await Rating.findOne({
-      rater: raterId,
-      ratedUser: ratedUserId,
-      post: postId || { $exists: false }
-    });
+    let postObjId = null;
+    if (postId) {
+      if (!mongoose.isValidObjectId(postId)) {
+        return res.status(400).json({ success: false, message: 'Invalid postId' });
+      }
+      postObjId = new mongoose.Types.ObjectId(postId);
+    }
+
+    const existingRating = await checkExistingRating(
+      new mongoose.Types.ObjectId(raterId),
+      new mongoose.Types.ObjectId(ratedUserId),
+      postObjId
+    );
 
     res.json({
       success: true,
@@ -305,12 +360,18 @@ export const getRatingsByUser = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const ratings = await Rating.find({ rater: mongoose.Types.ObjectId(userId) }).populate('ratedUser', 'name');
+    const ratings = await Rating.find({ rater: mongoose.Types.ObjectId(userId) })
+      .populate('ratedUser', 'name profilePhoto')
+      .populate('post', 'title')
+      .sort({ createdAt: -1 });
 
-    res.status(200).json(ratings);
+    res.status(200).json({
+      success: true,
+      ratings
+    });
   } catch (error) {
     console.error('Get ratings by user error:', error);
-    res.status(500).json({ message: 'Failed to fetch ratings', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to fetch ratings', error: error.message });
   }
 };
 
@@ -329,6 +390,17 @@ export const addUserRating = async (req, res) => {
       return res.status(400).json({ message: 'Invalid user id(s) provided' });
     }
 
+    // Check for existing rating
+    const existingRating = await checkExistingRating(
+      new mongoose.Types.ObjectId(rater),
+      new mongoose.Types.ObjectId(ratedUser),
+      null
+    );
+
+    if (existingRating) {
+      return res.status(400).json({ message: 'You have already rated this user' });
+    }
+
     const newRating = new Rating({
       ratedUser: new mongoose.Types.ObjectId(ratedUser),
       rater: new mongoose.Types.ObjectId(rater),
@@ -338,9 +410,21 @@ export const addUserRating = async (req, res) => {
 
     await newRating.save();
 
+    // Update user's average rating
+    try {
+      await updateUserAverageRating(ratedUser);
+    } catch (err) {
+      console.warn('Failed updating average rating:', err);
+    }
+
     res.status(201).json({ message: 'Rating added successfully', rating: newRating });
   } catch (error) {
     console.error('Add rating error:', error);
+
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'You have already rated this user' });
+    }
+
     res.status(500).json({ message: 'Failed to add rating', error: error.message });
   }
 };
