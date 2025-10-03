@@ -10,131 +10,127 @@ class EmailService {
   initialize() {
     if (this.initialized) return this.transporter;
 
-    console.log('🔧 Initializing SMTP transporter...');
+    console.log('🔧 Initializing SMTP transporter (pooled, keepAlive recommended)...');
     const SMTP_HOST = process.env.SMTP_HOST || 'smtp-relay.brevo.com';
     const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
     const SMTP_SECURE = (process.env.SMTP_SECURE === 'true'); // true for 465
     const SMTP_USER = process.env.SMTP_USER;
     const SMTP_PASS = process.env.SMTP_PASS;
-    const SENDER_EMAIL = process.env.SENDER_EMAIL || SMTP_USER;
 
-    console.log('SMTP_HOST:', SMTP_HOST);
-    console.log('SMTP_PORT:', SMTP_PORT);
-    console.log('SMTP_SECURE:', SMTP_SECURE);
+    console.log({ SMTP_HOST, SMTP_PORT, SMTP_SECURE });
     console.log('SMTP_USER:', SMTP_USER ? '✅ Set' : '❌ Missing');
-    console.log('SMTP_PASS:', SMTP_PASS ? `✅ Set (length ${SMTP_PASS.length})` : '❌ Missing');
-    console.log('SENDER_EMAIL:', SENDER_EMAIL || '❌ Missing');
+    console.log('SMTP_PASS:', SMTP_PASS ? `✅ Set (len ${SMTP_PASS.length})` : '❌ Missing');
 
     if (!SMTP_USER || !SMTP_PASS) {
-      console.error('❌ SMTP credentials missing during initialization');
+      console.error('❌ SMTP credentials missing; transporter will not be created');
       return null;
     }
 
-    // Create transporter with debug and timeouts to surfact problems in logs
+    // pooled transporter: reuses connections and handles bursts better
     this.transporter = nodemailer.createTransport({
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure: SMTP_SECURE,
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS,
-      },
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
+      keepAlive: true,
+      connectionTimeout: 30000,
+      greetingTimeout: 15000,
+      socketTimeout: 30000,
       logger: true,
       debug: true,
-      connectionTimeout: 20000,
-      greetingTimeout: 10000,
-      // If your environment requires it you may set rejectUnauthorized false
-      // tls: { rejectUnauthorized: false },
+      // tls: { rejectUnauthorized: false }, // uncomment only if necessary
     });
 
     this.initialized = true;
-    console.log('✅ SMTP transporter initialized');
+    console.log('✅ SMTP transporter initialized (pool:true, keepAlive:true)');
     return this.transporter;
   }
 
-  async verify() {
-    if (!this.transporter) {
-      this.initialize();
-    }
-
-    if (!this.transporter) {
-      console.error('Transporter not initialized; verify skipped');
-      return false;
-    }
-
+  async verifySafe() {
     try {
+      this.initialize();
+      if (!this.transporter) return false;
       const ok = await this.transporter.verify();
-      console.log('✅ SMTP connection verified successfully');
-      return true;
-    } catch (error) {
-      // log full stack to render logs
-      console.error('❌ SMTP verification failed:', error && (error.stack || error.message) ? (error.stack || error.message) : error);
+      console.log('✅ SMTP verify OK');
+      return ok;
+    } catch (err) {
+      console.warn('⚠️ SMTP verify failed (non-fatal):', err && (err.stack || err.message) ? (err.stack || err.message) : err);
       return false;
     }
   }
 
-  /**
-   * Try sending via SMTP. If it fails and BREVO_API_KEY exists, try Brevo HTTP API as fallback.
-   * Throws on fatal failure.
-   */
+  async _retry(fn, attempts = 3, delayMs = 800) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const backoff = delayMs * Math.pow(2, i);
+        console.warn(`Attempt ${i + 1} failed. Retrying in ${backoff}ms...`, err && err.message ? err.message : err);
+        await new Promise(r => setTimeout(r, backoff));
+      }
+    }
+    throw lastErr;
+  }
+
   async sendMail(mailOptions) {
+    this.initialize();
     if (!this.transporter) {
-      this.initialize();
+      throw new Error('SMTP transporter not initialized');
     }
 
-    if (!this.transporter) {
-      const err = new Error('SMTP transporter not initialized');
-      console.error(err);
-      throw err;
-    }
+    const brevoKey = process.env.BREVO_API_KEY;
 
+    // Try SMTP with retries
     try {
-      const info = await this.transporter.sendMail(mailOptions);
+      const info = await this._retry(() => this.transporter.sendMail(mailOptions), 3, 800);
       console.log('✅ sendMail success (SMTP):', {
-        messageId: info.messageId,
-        accepted: info.accepted,
-        rejected: info.rejected,
-        envelope: info.envelope,
+        messageId: info?.messageId,
+        accepted: info?.accepted,
+        rejected: info?.rejected,
       });
       return info;
     } catch (smtpErr) {
-      // Log smtp error fully (stack)
-      console.error('❌ sendMail failed via SMTP:', smtpErr && (smtpErr.stack || smtpErr.message) ? (smtpErr.stack || smtpErr.message) : smtpErr);
+      console.error('❌ sendMail via SMTP failed after retries:', smtpErr && (smtpErr.stack || smtpErr.message) ? (smtpErr.stack || smtpErr.message) : smtpErr);
 
-      // If Brevo HTTP API key available, attempt fallback
-      const brevoKey = process.env.BREVO_API_KEY;
+      // If Brevo API key present, attempt HTTP fallback
       if (brevoKey) {
-        console.log('🔁 Attempting fallback via Brevo HTTP API because BREVO_API_KEY is set');
+        console.log('🔁 Attempting Brevo HTTP API fallback because BREVO_API_KEY is present');
         try {
-          // dynamic import so package is optional
+          // dynamic import - optional dependency
           const Brevo = await import('@getbrevo/brevo').then(m => m.default || m);
           const apiClient = new Brevo.TransactionalEmailsApi();
           const defaultClient = Brevo.ApiClient.instance;
           defaultClient.authentications['api-key'].apiKey = brevoKey;
 
-          const { sender = {}, to = [] } = mailOptions;
-          // build payload
+          const toAddrs = Array.isArray(mailOptions.to)
+            ? mailOptions.to.map(t => ({ email: typeof t === 'string' ? t : t.address || t.email }))
+            : [{ email: typeof mailOptions.to === 'string' ? mailOptions.to : (mailOptions.to?.address || mailOptions.to?.email) }];
+
           const sendSmtpEmail = new Brevo.SendSmtpEmail({
-            sender: { email: process.env.SENDER_EMAIL || sender?.from || sender?.email },
-            to: Array.isArray(mailOptions.to) ? mailOptions.to.map(t => ({ email: t })) : [{ email: mailOptions.to }],
+            sender: { email: process.env.SENDER_EMAIL || mailOptions.from || (mailOptions.sender && mailOptions.sender.email) },
+            to: toAddrs,
             subject: mailOptions.subject,
-            htmlContent: mailOptions.html || undefined,
-            textContent: mailOptions.text || undefined,
+            htmlContent: mailOptions.html,
+            textContent: mailOptions.text,
           });
 
-          const res = await apiClient.sendTransacEmail(sendSmtpEmail);
-          console.log('✅ Brevo API sendTransacEmail success:', res);
-          return res;
+          const resp = await apiClient.sendTransacEmail(sendSmtpEmail);
+          console.log('✅ Brevo API fallback success:', resp);
+          return resp;
         } catch (brevoErr) {
-          console.error('❌ Brevo API fallback also failed:', brevoErr && (brevoErr.stack || brevoErr.message) ? (brevoErr.stack || brevoErr.message) : brevoErr);
-          // prefer throwing original SMTP error or combine
+          console.error('❌ Brevo API fallback failed:', brevoErr && (brevoErr.stack || brevoErr.message) ? (brevoErr.stack || brevoErr.message) : brevoErr);
           const e = new Error('Both SMTP and Brevo API sending failed');
-          e.details = { smtpError: smtpErr?.message || String(smtpErr), brevoError: brevoErr?.message || String(brevoErr) };
+          e.details = { smtp: (smtpErr && smtpErr.message) || String(smtpErr), brevo: (brevoErr && brevoErr.message) || String(brevoErr) };
           throw e;
         }
       }
 
-      // If no fallback, rethrow SMTP error
+      // no fallback available — rethrow
       throw smtpErr;
     }
   }
