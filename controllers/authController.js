@@ -45,23 +45,7 @@ export const register = async (req, res) => {
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
-
-    // Respond immediately (important!!)
-    res.status(201).json({
-      success: true,
-      message: "User registered successfully",
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-      },
-    });
-
-    // Fire-and-forget notifications (async background)
-    (async () => {
+      (async () => {
       // WhatsApp via Twilio if phone exists
       // if (phone) {
       //   try {
@@ -93,6 +77,23 @@ export const register = async (req, res) => {
         console.warn("❌ Welcome email failed (non-blocking):", emailErr?.message || emailErr);
       }
     })();
+
+    // Respond immediately (important!!)
+    res.status(201).json({
+      success: true,
+      message: "User registered successfully",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,
+      },
+    });
+
+    // Fire-and-forget notifications (async background)
+
   } catch (error) {
     console.error("Registration error:", error);
     // If we already sent a 201 response above, no need to try sending another response.
