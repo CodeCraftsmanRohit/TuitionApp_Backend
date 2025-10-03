@@ -14,78 +14,40 @@ import transporter from "../config/modemailer.js";
 
 import emailService from "../config/modemailer.js";
 
+
 export const register = async (req, res) => {
   const { name, email, password, role, phone } = req.body;
 
   if (!name || !email || !password) {
-    return res.json({ success: false, message: "Missing Details" });
+    return res.status(400).json({ success: false, message: "Missing Details" });
   }
 
   try {
+    // Check existing user
     const existingUser = await userModel.findOne({ email });
     if (existingUser) {
-      return res.json({ success: false, message: "User already exists" });
+      return res.status(409).json({ success: false, message: "User already exists" });
     }
 
+    // Hash password & create user
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new userModel({
       name,
       email,
       password: hashedPassword,
-      role: role || 'teacher',
-      phone: phone || ''  // Add phone during registration
+      role: role || "teacher",
+      phone: phone || "",
     });
 
     await user.save();
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+    // Create token (returned in JSON so mobile can store it)
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
     });
 
-    // Send welcome message on WhatsApp if phone provided
-    if (phone) {
-      try {
-        const welcomeMessage = `Welcome to Tuition App, ${name}! 🎓\n\nYour account has been created successfully.\nEmail: ${email}\n\nYou will receive notifications about new tuition opportunities via WhatsApp.\n\nThank you for joining!`;
-        await twilioService.sendWhatsAppMessage(`whatsapp:${phone.replace(/\D/g, '')}`, welcomeMessage);
-        console.log(`✅ WhatsApp welcome sent to ${phone}`);
-      } catch (whatsappError) {
-        console.log('⚠️ Welcome WhatsApp message failed:', whatsappError.message);
-        // Don't block registration
-      }
-    }
-
-    // Send welcome email (non-blocking)
-    try {
-      const isEmailReady = await emailService.verify();
-      if (isEmailReady) {
-        const mailOptions = {
-          from: process.env.SENDER_EMAIL,
-          to: email,
-          subject: "Welcome to Tuition App!",
-          html: WELCOME_EMAIL_TEMPLATE.replace('{{email}}', email)  // Use template from emailTemplates.js
-        };
-        await emailService.sendMail(mailOptions);
-        console.log(`✅ Welcome email sent to: ${email}`);
-      } else {
-        console.log(`⚠️ Email service not ready for ${email}`);
-      }
-    } catch (emailError) {
-      console.error(`❌ Welcome email failed for ${email}: ${emailError.message}`);
-      // Continue registration
-    }
-
-    console.log(`✅ User registered: ${email} (${name})`);
-
-    return res.json({
+    // Respond immediately (important!!)
+    res.status(201).json({
       success: true,
       message: "User registered successfully",
       token,
@@ -94,12 +56,50 @@ export const register = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        phone: user.phone
+        phone: user.phone,
       },
     });
+
+    // Fire-and-forget notifications (async background)
+    (async () => {
+      // WhatsApp via Twilio if phone exists
+      if (phone) {
+        try {
+          const to = `whatsapp:${phone.replace(/\D/g, "")}`;
+          const welcomeMessage = `Welcome to Tuition App, ${name}! 🎓\n\nYour account has been created successfully.\nEmail: ${email}\n\nThank you for joining!`;
+          await twilioService.sendWhatsAppMessage(to, welcomeMessage);
+          console.log(`✅ WhatsApp welcome sent to ${phone}`);
+        } catch (whatsappError) {
+          console.warn("⚠️ WhatsApp send failed (non-blocking):", whatsappError?.message || whatsappError);
+        }
+      }
+
+      // Welcome email (if mailer ready)
+      try {
+        const ready = await emailService.verify();
+        if (ready) {
+          const mailOptions = {
+            from: process.env.SENDER_EMAIL,
+            to: email,
+            subject: "Welcome to Tuition App!",
+            html: WELCOME_EMAIL_TEMPLATE.replace("{{email}}", email),
+          };
+          await emailService.sendMail(mailOptions);
+          console.log(`✅ Welcome email queued/sent to ${email}`);
+        } else {
+          console.log("⚠️ Email service not ready — skipping welcome email for", email);
+        }
+      } catch (emailErr) {
+        console.warn("❌ Welcome email failed (non-blocking):", emailErr?.message || emailErr);
+      }
+    })();
   } catch (error) {
-    console.error('Registration error:', error);
-    return res.json({ success: false, message: error.message });
+    console.error("Registration error:", error);
+    // If we already sent a 201 response above, no need to try sending another response.
+    // But in case of errors before sending response:
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
   }
 };
 
