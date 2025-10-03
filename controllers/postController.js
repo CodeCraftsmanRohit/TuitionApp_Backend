@@ -324,11 +324,11 @@ export const getAllPosts = async (req, res) => {
 };
 
 // Update the updatePost function
+// controllers/postController.js - Update updatePost function
 export const updatePost = async (req, res) => {
   const postId = req.params.id;
   const userId = req.userId;
   const userRole = req.userRole;
-  const updateData = { ...req.body };
 
   try {
     const post = await postModel.findById(postId);
@@ -337,6 +337,41 @@ export const updatePost = async (req, res) => {
     // Check if user owns the post OR is admin
     if (post.createdBy.toString() !== userId && userRole !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to edit this post' });
+    }
+
+    let updateData = { ...req.body };
+
+    // Handle image upload if file exists
+    if (req.file && req.file.buffer) {
+      try {
+        console.log('📤 Starting Cloudinary upload for post update:', postId);
+        const result = await uploadOnCloudinary(req.file.buffer, 'tuition-posts');
+        updateData.image = { url: result.secure_url, public_id: result.public_id };
+
+        // Delete old image from Cloudinary if exists
+        if (post.image && post.image.public_id) {
+          try {
+            await cloudinary.uploader.destroy(post.image.public_id);
+          } catch (cloudErr) {
+            console.warn('⚠️ Failed to delete old image from Cloudinary:', cloudErr);
+          }
+        }
+      } catch (cloudErr) {
+        console.warn('⚠️ Cloudinary upload failed:', cloudErr?.message || cloudErr);
+        // Continue with update even if image upload fails
+      }
+    }
+
+    // Handle image removal
+    if (req.body.removeImage === 'true') {
+      if (post.image && post.image.public_id) {
+        try {
+          await cloudinary.uploader.destroy(post.image.public_id);
+        } catch (cloudErr) {
+          console.warn('⚠️ Failed to delete image from Cloudinary:', cloudErr);
+        }
+      }
+      updateData.image = { url: '', public_id: '' };
     }
 
     const updated = await postModel.findByIdAndUpdate(postId, updateData, { new: true })
@@ -380,5 +415,84 @@ export const deletePost = async (req, res) => {
   } catch (err) {
     console.error('Delete post error:', err);
     return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Add to controllers/postController.js
+export const getUserLikes = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    const postsWithLikes = await postModel.find({
+      'likes.user': userId
+    })
+    .populate('createdBy', 'name profilePhoto')
+    .select('title image likes createdAt')
+    .sort({ createdAt: -1 });
+
+    const likes = postsWithLikes.map(post => {
+      const userLike = post.likes.find(like => like.user.toString() === userId);
+      return {
+        _id: userLike?._id,
+        post: {
+          _id: post._id,
+          title: post.title,
+          image: post.image,
+          createdAt: post.createdAt
+        },
+        createdAt: userLike?.createdAt || post.createdAt
+      };
+    });
+
+    res.json({
+      success: true,
+      likes
+    });
+  } catch (error) {
+    console.error('Get user likes error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getUserComments = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    const postsWithComments = await postModel.find({
+      'comments.user': userId
+    })
+    .populate('createdBy', 'name profilePhoto')
+    .select('title image comments createdAt')
+    .sort({ createdAt: -1 });
+
+    const comments = [];
+    postsWithComments.forEach(post => {
+      post.comments.forEach(comment => {
+        if (comment.user.toString() === userId) {
+          comments.push({
+            _id: comment._id,
+            post: {
+              _id: post._id,
+              title: post.title,
+              image: post.image,
+              createdAt: post.createdAt
+            },
+            text: comment.text,
+            createdAt: comment.createdAt
+          });
+        }
+      });
+    });
+
+    // Sort comments by date
+    comments.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.json({
+      success: true,
+      comments
+    });
+  } catch (error) {
+    console.error('Get user comments error:', error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
