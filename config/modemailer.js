@@ -1,9 +1,8 @@
 // config/modemailer.js
 /**
- * Brevo-first mailer with optional SMTP fallback.
- *
- * Set BREVO_API_KEY on Render to use Brevo HTTP API (recommended).
- * If BREVO_API_KEY is absent, this will fallback to SMTP using the existing SMTP_ env vars.
+ * Brevo-first mailer with correct ESM usage of @getbrevo/brevo and SMTP fallback.
+ * - Requires BREVO_API_KEY env var to use Brevo HTTP API.
+ * - If BREVO_API_KEY absent or Brevo call fails, falls back to SMTP (nodemailer).
  */
 
 import nodemailer from 'nodemailer';
@@ -15,7 +14,6 @@ class Mailer {
     this.transporter = null;
   }
 
-  // Initialize SMTP transporter lazily (fallback only)
   initSmtp() {
     if (this.smtpInitialized) return this.transporter;
 
@@ -27,7 +25,7 @@ class Mailer {
 
     if (!SMTP_USER || !SMTP_PASS) {
       console.warn('SMTP credentials not fully set — SMTP fallback will be unavailable');
-      this.smtpInitialized = true; // mark as attempted
+      this.smtpInitialized = true;
       return null;
     }
 
@@ -51,38 +49,50 @@ class Mailer {
     return this.transporter;
   }
 
-  // Send using Brevo API (preferred)
+  // Primary: send via Brevo API using named exports properly
   async sendViaBrevo(mailOptions) {
-    // dynamic import so this package is optional
-    try {
-      const Brevo = await import('@getbrevo/brevo').then(m => m.default || m);
-      const client = new Brevo.TransactionalEmailsApi();
-      const defaultClient = Brevo.ApiClient.instance;
-      defaultClient.authentications['api-key'].apiKey = this.brevoKey;
+    if (!this.brevoKey) throw new Error('BREVO_API_KEY not set');
 
-      // build recipients
-      const to = Array.isArray(mailOptions.to)
+    try {
+      // import module namespace
+      const BrevoModule = await import('@getbrevo/brevo');
+      // extract named exports (works for both default and named shapes)
+      const Brevo = BrevoModule.default || BrevoModule;
+      const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = Brevo;
+
+      if (!TransactionalEmailsApi || !ApiClient || !SendSmtpEmail) {
+        throw new Error('Unexpected Brevo module shape — required classes missing');
+      }
+
+      const client = new TransactionalEmailsApi();
+      // set API key on ApiClient.instance
+      ApiClient.instance.authentications['api-key'].apiKey = this.brevoKey;
+
+      // Build recipients array
+      const toAddrs = Array.isArray(mailOptions.to)
         ? mailOptions.to.map(t => ({ email: typeof t === 'string' ? t : t.address || t.email }))
         : [{ email: typeof mailOptions.to === 'string' ? mailOptions.to : (mailOptions.to?.address || mailOptions.to?.email) }];
 
-      const sendSmtpEmail = new Brevo.SendSmtpEmail({
-        sender: { email: process.env.SENDER_EMAIL || mailOptions.from || (mailOptions.sender && mailOptions.sender.email) },
-        to,
+      const senderEmail = process.env.SENDER_EMAIL || mailOptions.from || (mailOptions.sender && mailOptions.sender.email);
+
+      const payload = new SendSmtpEmail({
+        sender: { email: senderEmail },
+        to: toAddrs,
         subject: mailOptions.subject,
         htmlContent: mailOptions.html,
         textContent: mailOptions.text,
       });
 
-      const resp = await client.sendTransacEmail(sendSmtpEmail);
-      console.log('✅ Brevo API send successful', resp);
+      const resp = await client.sendTransacEmail(payload);
+      console.log('✅ Brevo API send successful:', resp);
       return resp;
     } catch (err) {
+      // log full stack for Render
       console.error('❌ Brevo API send failed:', err && (err.stack || err.message) ? (err.stack || err.message) : err);
       throw err;
     }
   }
 
-  // Send using SMTP fallback
   async sendViaSmtp(mailOptions) {
     const transporter = this.initSmtp();
     if (!transporter) throw new Error('SMTP transporter not available');
@@ -101,19 +111,19 @@ class Mailer {
     }
   }
 
-  // Primary public method
+  // public method: prefer Brevo HTTP API, fallback to SMTP
   async sendMail(mailOptions) {
-    // prefer Brevo HTTP API
+    // If BREVO_API_KEY configured, try Brevo first
     if (this.brevoKey) {
       try {
         return await this.sendViaBrevo(mailOptions);
       } catch (brevoErr) {
-        console.warn('⚠️ Brevo API present but failed — attempting SMTP fallback (if configured)');
+        console.warn('⚠️ Brevo API present but failed — attempting SMTP fallback if available');
         // fallthrough to SMTP fallback
       }
     }
 
-    // fallback to SMTP
+    // SMTP fallback
     return await this.sendViaSmtp(mailOptions);
   }
 }
